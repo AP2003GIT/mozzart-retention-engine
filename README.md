@@ -27,7 +27,7 @@ Retention + Responsible Gaming MVP for Mozzart Bet.
 - Vitest + Vue Test Utils
 
 ## Run
-
+App runs on http://localhost:5174.
 ```bash
 npm install
 npm run dev
