@@ -17,12 +17,13 @@ const props = defineProps({
     <p v-if="props.rows.length === 0" class="panel-empty">No experiment data.</p>
 
     <table v-else>
+      <caption class="visually-hidden">Campaign A/B outcome summary</caption>
       <thead>
         <tr>
-          <th>Campaign</th>
-          <th>Group A</th>
-          <th>Group B</th>
-          <th>Winner</th>
+          <th scope="col">Campaign</th>
+          <th scope="col">Group A</th>
+          <th scope="col">Group B</th>
+          <th scope="col">Winner</th>
         </tr>
       </thead>
       <tbody>

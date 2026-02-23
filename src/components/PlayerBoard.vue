@@ -10,7 +10,7 @@ const props = defineProps({
 </script>
 
 <template>
-  <section class="player-board" aria-live="polite">
+  <section class="player-board" aria-live="polite" aria-label="Player cards">
     <p v-if="props.players.length === 0" class="empty-state">
       No players match the current filters.
     </p>

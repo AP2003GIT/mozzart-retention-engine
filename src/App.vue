@@ -26,6 +26,18 @@ const lastUpdateText = computed(() => {
   return `updated at ${new Date(store.lastUpdatedAt).toLocaleTimeString()}`;
 });
 
+const streamSourceText = computed(() => {
+  if (store.streamSource === 'backend') {
+    return 'Backend API';
+  }
+
+  if (store.streamSource === 'mock') {
+    return 'Local mock feed';
+  }
+
+  return 'Not connected';
+});
+
 function toggleStream() {
   if (store.isConnected) {
     store.disconnect();
@@ -53,8 +65,14 @@ function toggleStream() {
             {{ store.isConnected ? 'Live' : 'Paused' }}
           </span>
         </p>
-        <p class="status-sub">{{ lastUpdateText }}</p>
-        <button type="button" class="status-btn" @click="toggleStream">
+        <p class="status-sub">Source: {{ streamSourceText }}</p>
+        <p class="status-sub" role="status" aria-live="polite">{{ lastUpdateText }}</p>
+        <button
+          type="button"
+          class="status-btn"
+          :aria-pressed="store.isConnected ? 'true' : 'false'"
+          @click="toggleStream"
+        >
           {{ store.isConnected ? 'Pause feed' : 'Resume feed' }}
         </button>
       </div>

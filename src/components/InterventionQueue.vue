@@ -12,7 +12,7 @@ function statusClass(status) {
 </script>
 
 <template>
-  <section class="queue-panel">
+  <section class="queue-panel" aria-live="polite">
     <header>
       <p class="panel-label">Automation queue</p>
       <h2>CRM + Risk interventions</h2>

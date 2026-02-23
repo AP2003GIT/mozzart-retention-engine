@@ -5,7 +5,13 @@ export default defineConfig({
   plugins: [vue()],
   server: {
     port: 5174,
-    strictPort: true
+    strictPort: true,
+    proxy: {
+      '/api': {
+        target: `http://localhost:${process.env.RETENTION_API_PORT ?? 8787}`,
+        changeOrigin: true
+      }
+    }
   },
   test: {
     environment: 'jsdom',

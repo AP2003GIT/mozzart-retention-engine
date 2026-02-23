@@ -4,14 +4,18 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "vite",
+    "dev": "node scripts/dev-all.mjs",
+    "dev:frontend": "vite",
+    "dev:backend": "node server/index.js",
     "build": "vite build",
+    "start": "node server/index.js",
     "preview": "vite preview",
     "test": "vitest run",
     "test:watch": "vitest"
   },
   "dependencies": {
     "pinia": "^2.1.7",
+    "pg": "^8.16.3",
     "vue": "^3.4.38"
   },
   "devDependencies": {
