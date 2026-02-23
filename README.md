@@ -18,6 +18,7 @@ Retention + Responsible Gaming MVP for Mozzart Bet.
 - Shows CRM and Risk queue with priority ordering
 - Tracks campaign A/B outcomes per campaign family
 - Streams player behavior in near real time from backend API (with local mock fallback)
+- Uses rolling risk baselines and hysteresis (enter/exit buffers) to avoid unstable `At-risk` flipping
 
 ## Stack
 
@@ -81,6 +82,12 @@ Useful scripts:
 - Every activity update is persisted to DB, so data survives restart.
 - Activity history can be read via `GET /api/activity`.
 - Check current mode via `GET /api/health` (`persistenceMode` is `postgres` or `memory`).
+
+## Risk Model Notes
+
+- Risk score is continuous and uses inactivity, loss/session deltas vs rolling baselines, and volatility.
+- `At-risk` entry requires sustained risk; exit requires multiple healthy updates.
+- Severe signals (very high inactivity/loss/session) can still trigger immediate `At-risk`.
 
 Quick verify:
 

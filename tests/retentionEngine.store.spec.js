@@ -15,19 +15,28 @@ describe('retention engine store', () => {
     const vip = store.players.find((player) => player.id === 'p-1009');
     const newcomer = store.players.find((player) => player.id === 'p-1012');
 
-    expect(inactive.segment).toBe('At-risk');
+    expect(inactive.segment).toBe('Active');
     expect(inactive.triggers.inactivity7d).toBe(true);
     expect(vip.segment).toBe('VIP');
     expect(newcomer.segment).toBe('New');
   });
 
-  it('builds and sorts intervention queue by urgency', () => {
+  it('builds and sorts intervention queue by priority and risk', () => {
     const store = useRetentionEngineStore();
     store.init();
 
     expect(store.interventionQueue.length).toBeGreaterThan(0);
-    expect(store.interventionQueue[0].status).toBe('Immediate review');
-    expect(store.interventionQueue[0].priority).toBe(1);
+
+    for (let index = 1; index < store.interventionQueue.length; index += 1) {
+      const previous = store.interventionQueue[index - 1];
+      const current = store.interventionQueue[index];
+
+      expect(current.priority).toBeGreaterThanOrEqual(previous.priority);
+
+      if (current.priority === previous.priority) {
+        expect(current.riskScore).toBeLessThanOrEqual(previous.riskScore);
+      }
+    }
   });
 
   it('recomputes campaign and risk state when activity updates arrive', () => {

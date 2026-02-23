@@ -51,6 +51,22 @@ const SEGMENT_ORDER = {
   Active: 4
 };
 
+const ENTRY_RISK_THRESHOLD = 64;
+const EXIT_RISK_THRESHOLD = 42;
+const LOSS_BASELINE_MIN = 8;
+const SESSION_BASELINE_MIN = 30;
+const EXTREME_INACTIVITY_DAYS = 10;
+const EXTREME_LOSS_PERCENT = 85;
+const EXTREME_SESSION_MINUTES = 170;
+
+function clamp(value, min, max) {
+  return Math.max(min, Math.min(max, value));
+}
+
+function ema(currentValue, nextValue, weight) {
+  return currentValue + (nextValue - currentValue) * weight;
+}
+
 export function toNumber(value, fallback = 0) {
   const parsed = Number(value);
   return Number.isFinite(parsed) ? parsed : fallback;
@@ -63,28 +79,227 @@ export function sanitizeExperiment(experiment = {}) {
   };
 }
 
-export function deriveTriggers(player) {
+function normalizeRiskMeta(player) {
+  const previous = player.riskMeta ?? {};
+  const fallbackLoss = Math.max(LOSS_BASELINE_MIN, toNumber(player.lossChange24hPercent, LOSS_BASELINE_MIN));
+  const fallbackSession = Math.max(
+    SESSION_BASELINE_MIN,
+    toNumber(player.avgSessionMinutes, SESSION_BASELINE_MIN)
+  );
+
   return {
-    inactivity7d: player.daysSinceLastBet >= 7,
-    lossSpike24h: player.lossChange24hPercent >= 45,
-    longSessions: player.avgSessionMinutes >= 120
+    baselineLossPct: clamp(toNumber(previous.baselineLossPct, fallbackLoss), LOSS_BASELINE_MIN, 160),
+    baselineSessionMinutes: clamp(
+      toNumber(previous.baselineSessionMinutes, fallbackSession),
+      SESSION_BASELINE_MIN,
+      240
+    ),
+    rollingLossPct: clamp(toNumber(previous.rollingLossPct, toNumber(player.lossChange24hPercent, 0)), -60, 160),
+    rollingSessionMinutes: clamp(
+      toNumber(previous.rollingSessionMinutes, toNumber(player.avgSessionMinutes, 45)),
+      15,
+      240
+    ),
+    atRiskStreak: Math.max(0, Math.trunc(toNumber(previous.atRiskStreak, 0))),
+    healthyStreak: Math.max(0, Math.trunc(toNumber(previous.healthyStreak, 0))),
+    updates: Math.max(0, Math.trunc(toNumber(previous.updates, 0)))
   };
 }
 
-export function resolveSegment(player, triggers) {
-  if (triggers.inactivity7d || triggers.lossSpike24h || triggers.longSessions) {
-    return 'At-risk';
+function refreshRiskMeta(player, riskMeta) {
+  const healthySignal =
+    player.daysSinceLastBet <= 2 &&
+    player.lossChange24hPercent < 45 &&
+    player.avgSessionMinutes < 120;
+
+  const baselineWeight = healthySignal ? 0.14 : 0.04;
+
+  return {
+    ...riskMeta,
+    baselineLossPct: clamp(
+      ema(riskMeta.baselineLossPct, Math.max(LOSS_BASELINE_MIN, player.lossChange24hPercent), baselineWeight),
+      LOSS_BASELINE_MIN,
+      160
+    ),
+    baselineSessionMinutes: clamp(
+      ema(
+        riskMeta.baselineSessionMinutes,
+        Math.max(SESSION_BASELINE_MIN, player.avgSessionMinutes),
+        baselineWeight
+      ),
+      SESSION_BASELINE_MIN,
+      240
+    ),
+    rollingLossPct: clamp(ema(riskMeta.rollingLossPct, player.lossChange24hPercent, 0.22), -60, 160),
+    rollingSessionMinutes: clamp(
+      ema(riskMeta.rollingSessionMinutes, player.avgSessionMinutes, 0.22),
+      15,
+      240
+    ),
+    updates: riskMeta.updates + 1
+  };
+}
+
+function lossSpikeThreshold(riskMeta) {
+  return Math.max(45, riskMeta.baselineLossPct + 18, riskMeta.rollingLossPct + 14);
+}
+
+function longSessionThreshold(riskMeta) {
+  return Math.max(120, riskMeta.baselineSessionMinutes * 1.6, riskMeta.rollingSessionMinutes * 1.45);
+}
+
+function deriveSevereSignals(player) {
+  return {
+    severeInactivity: player.daysSinceLastBet >= EXTREME_INACTIVITY_DAYS,
+    severeLossSpike: player.lossChange24hPercent >= EXTREME_LOSS_PERCENT,
+    severeLongSessions: player.avgSessionMinutes >= EXTREME_SESSION_MINUTES
+  };
+}
+
+export function deriveTriggers(player, riskMeta = null) {
+  const activeRiskMeta = riskMeta ?? normalizeRiskMeta(player);
+
+  return {
+    inactivity7d: player.daysSinceLastBet >= 7,
+    lossSpike24h: player.lossChange24hPercent >= lossSpikeThreshold(activeRiskMeta),
+    longSessions: player.avgSessionMinutes >= longSessionThreshold(activeRiskMeta)
+  };
+}
+
+export function riskScoreFromTriggers(player, triggers, riskMeta = null) {
+  const activeRiskMeta = riskMeta ?? normalizeRiskMeta(player);
+  const inactivityScore = clamp(((player.daysSinceLastBet - 1) / 12) * 100, 0, 100);
+  const lossDelta = player.lossChange24hPercent - activeRiskMeta.baselineLossPct;
+  const lossScore = clamp(((lossDelta + 8) / 58) * 100, 0, 100);
+  const sessionDelta = player.avgSessionMinutes - activeRiskMeta.baselineSessionMinutes;
+  const sessionScore = clamp(((sessionDelta + 10) / 110) * 100, 0, 100);
+  const volatilityScore = clamp(
+    (
+      (Math.abs(player.lossChange24hPercent - activeRiskMeta.rollingLossPct) +
+        Math.abs(player.avgSessionMinutes - activeRiskMeta.rollingSessionMinutes) * 0.45) /
+      70
+    ) * 100,
+    0,
+    100
+  );
+
+  let score = 8 + inactivityScore * 0.35 + lossScore * 0.35 + sessionScore * 0.22 + volatilityScore * 0.08;
+
+  if (triggers.inactivity7d) {
+    score += 8;
+  }
+  if (triggers.lossSpike24h) {
+    score += 8;
+  }
+  if (triggers.longSessions) {
+    score += 7;
+  }
+
+  const severe = deriveSevereSignals(player);
+  if (severe.severeInactivity || severe.severeLossSpike || severe.severeLongSessions) {
+    score += 10;
+  }
+
+  return Math.round(clamp(score, 0, 100));
+}
+
+function resolveSegmentState(player, triggers, riskScore, riskMeta) {
+  const severe = deriveSevereSignals(player);
+  const severeRisk = severe.severeInactivity || severe.severeLossSpike || severe.severeLongSessions;
+  const previousSegment = player.segment;
+  const warmupWindow = riskMeta.updates <= 1 && !previousSegment;
+
+  const highRiskNow =
+    riskScore >= ENTRY_RISK_THRESHOLD ||
+    (triggers.inactivity7d && (triggers.lossSpike24h || triggers.longSessions));
+  const lowRiskNow =
+    riskScore <= EXIT_RISK_THRESHOLD &&
+    !triggers.inactivity7d &&
+    !triggers.lossSpike24h &&
+    !triggers.longSessions;
+
+  let atRiskStreak = riskMeta.atRiskStreak;
+  let healthyStreak = riskMeta.healthyStreak;
+  let isAtRisk = false;
+
+  if (severeRisk) {
+    isAtRisk = true;
+    atRiskStreak =
+      previousSegment === 'At-risk' ? riskMeta.atRiskStreak + 1 : Math.max(riskMeta.atRiskStreak + 1, 2);
+    healthyStreak = 0;
+  } else if (previousSegment === 'At-risk') {
+    if (lowRiskNow) {
+      healthyStreak = riskMeta.healthyStreak + 1;
+    } else {
+      healthyStreak = 0;
+    }
+
+    atRiskStreak = highRiskNow ? riskMeta.atRiskStreak + 1 : Math.max(riskMeta.atRiskStreak - 1, 0);
+    isAtRisk = healthyStreak < 3;
+
+    if (!isAtRisk) {
+      atRiskStreak = 0;
+    }
+  } else {
+    atRiskStreak = highRiskNow ? riskMeta.atRiskStreak + 1 : 0;
+    healthyStreak = lowRiskNow ? riskMeta.healthyStreak + 1 : 0;
+    isAtRisk = atRiskStreak >= 2;
+
+    if (warmupWindow && highRiskNow && riskScore >= ENTRY_RISK_THRESHOLD + 6) {
+      isAtRisk = true;
+      atRiskStreak = Math.max(atRiskStreak, 2);
+    }
+  }
+
+  if (isAtRisk) {
+    return {
+      segment: 'At-risk',
+      riskMeta: {
+        ...riskMeta,
+        atRiskStreak,
+        healthyStreak
+      }
+    };
   }
 
   if (player.netDeposit30d >= 5000 || player.totalBets30d >= 220) {
-    return 'VIP';
+    return {
+      segment: 'VIP',
+      riskMeta: {
+        ...riskMeta,
+        atRiskStreak: 0,
+        healthyStreak
+      }
+    };
   }
 
   if (player.daysSinceJoined <= 30) {
-    return 'New';
+    return {
+      segment: 'New',
+      riskMeta: {
+        ...riskMeta,
+        atRiskStreak: 0,
+        healthyStreak
+      }
+    };
   }
 
-  return 'Active';
+  return {
+    segment: 'Active',
+    riskMeta: {
+      ...riskMeta,
+      atRiskStreak: 0,
+      healthyStreak
+    }
+  };
+}
+
+export function resolveSegment(player, triggers, riskScore = null, riskMeta = null) {
+  const activeRiskMeta = riskMeta ?? normalizeRiskMeta(player);
+  const resolvedRiskScore =
+    riskScore === null ? riskScoreFromTriggers(player, triggers, activeRiskMeta) : riskScore;
+
+  return resolveSegmentState(player, triggers, resolvedRiskScore, activeRiskMeta).segment;
 }
 
 export function resolveCampaign(segment, triggers) {
@@ -107,32 +322,11 @@ export function resolveCampaign(segment, triggers) {
   return CAMPAIGNS.loyalty;
 }
 
-export function riskScoreFromTriggers(player, triggers) {
-  let score = 8;
-
-  if (triggers.inactivity7d) {
-    score += 42;
-  }
-
-  if (triggers.lossSpike24h) {
-    score += 36;
-  }
-
-  if (triggers.longSessions) {
-    score += 24;
-  }
-
-  if (player.lossChange24hPercent > 70) {
-    score += 10;
-  }
-
-  return Math.min(100, score);
-}
-
 export function activeTriggerLabels(triggers) {
   return Object.entries(triggers)
     .filter(([, value]) => value)
-    .map(([code]) => TRIGGER_LABELS[code]);
+    .map(([code]) => TRIGGER_LABELS[code])
+    .filter(Boolean);
 }
 
 export function enrichPlayer(player) {
@@ -147,16 +341,19 @@ export function enrichPlayer(player) {
     experiment: sanitizeExperiment(player.experiment)
   };
 
-  const triggers = deriveTriggers(normalized);
-  const segment = resolveSegment(normalized, triggers);
-  const campaign = resolveCampaign(segment, triggers);
+  const riskMeta = refreshRiskMeta(normalized, normalizeRiskMeta(normalized));
+  const triggers = deriveTriggers(normalized, riskMeta);
+  const riskScore = riskScoreFromTriggers(normalized, triggers, riskMeta);
+  const segmentState = resolveSegmentState(normalized, triggers, riskScore, riskMeta);
+  const campaign = resolveCampaign(segmentState.segment, triggers);
 
   return {
     ...normalized,
-    segment,
+    segment: segmentState.segment,
     triggers,
     campaign,
-    riskScore: riskScoreFromTriggers(normalized, triggers),
+    riskScore,
+    riskMeta: segmentState.riskMeta,
     triggerLabels: activeTriggerLabels(triggers)
   };
 }
@@ -166,7 +363,7 @@ export function enrichPlayers(players = []) {
 }
 
 export function buildIntervention(player) {
-  const urgent = player.riskScore >= 70;
+  const urgent = player.riskScore >= 72;
 
   return {
     id: `${player.id}:${player.campaign.id}`,
@@ -214,7 +411,8 @@ export function filterPlayers(players = [], filters = DEFAULT_FILTERS) {
       const segmentMatch = filters.segment === 'All' || player.segment === filters.segment;
       const triggerMatch = !requiredTrigger || player.triggers[requiredTrigger];
       const searchMatch =
-        !search || `${player.name} ${player.market} ${player.campaign.label}`.toLowerCase().includes(search);
+        !search ||
+        `${player.name} ${player.market} ${player.campaign.label}`.toLowerCase().includes(search);
 
       return segmentMatch && triggerMatch && searchMatch;
     })
@@ -240,13 +438,14 @@ export function buildKpis(players = []) {
     (player) => player.triggers.inactivity7d && player.experiment.accepted
   ).length;
   const acceptedOffers = players.filter((player) => player.experiment.accepted).length;
-  const riskyPlayers = players.filter((player) => player.riskScore >= 70).length;
+  const riskyPlayers = players.filter((player) => player.riskScore >= 72).length;
 
   return {
     totalPlayers,
     atRiskPlayers,
     retention30d: totalPlayers === 0 ? 0 : Math.round((retainedPlayers / totalPlayers) * 100),
-    reactivationRate: dormantPlayers === 0 ? 0 : Math.round((reactivatedPlayers / dormantPlayers) * 100),
+    reactivationRate:
+      dormantPlayers === 0 ? 0 : Math.round((reactivatedPlayers / dormantPlayers) * 100),
     promoRoi: totalPlayers === 0 ? 0 : Math.round((acceptedOffers / totalPlayers) * 170 - 32),
     riskyTrend: totalPlayers === 0 ? 0 : Math.round((riskyPlayers / totalPlayers) * 100)
   };
