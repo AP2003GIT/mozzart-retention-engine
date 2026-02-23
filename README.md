@@ -54,7 +54,7 @@ Retention + Responsible Gaming MVP for Mozzart Bet.
 npm install
 ```
 
-3. Add `.env` in project root:
+3. Optional: add `.env` in project root for PostgreSQL persistence:
 
 ```env
 DATABASE_URL="postgresql://...your-neon-connection-string..."
@@ -74,6 +74,18 @@ Useful scripts:
 - To expose backend on LAN (for device testing), set `RETENTION_API_HOST=0.0.0.0`.
 - If `DATABASE_URL` is missing, backend falls back to memory mode.
 
+### Dev Troubleshooting
+
+- `EADDRINUSE` (`8787` or frontend port already in use):
+  - Bash: `RETENTION_API_PORT=8788 npm run dev`
+  - PowerShell: `$env:RETENTION_API_PORT=8788; npm run dev`
+  - CMD: `set RETENTION_API_PORT=8788 && npm run dev`
+- Neon DNS/network lookup error (`EAI_AGAIN`):
+  - Start in memory mode for now:
+    - Bash: `DATABASE_URL= npm run dev`
+    - PowerShell: `$env:DATABASE_URL=''; npm run dev`
+    - CMD: `set DATABASE_URL= && npm run dev`
+
 ## Postgres Persistence
 
 - Startup auto-creates `players` table if it does not exist.
@@ -88,6 +100,7 @@ Useful scripts:
 - Risk score is continuous and uses inactivity, loss/session deltas vs rolling baselines, and volatility.
 - `At-risk` entry requires sustained risk; exit requires multiple healthy updates.
 - Severe signals (very high inactivity/loss/session) can still trigger immediate `At-risk`.
+- Trigger/risk calibration is tuned to produce realistic intervention volume instead of near-zero or always-at-risk behavior.
 
 Quick verify:
 

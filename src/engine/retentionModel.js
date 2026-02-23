@@ -51,8 +51,8 @@ const SEGMENT_ORDER = {
   Active: 4
 };
 
-const ENTRY_RISK_THRESHOLD = 64;
-const EXIT_RISK_THRESHOLD = 42;
+const ENTRY_RISK_THRESHOLD = 58;
+const EXIT_RISK_THRESHOLD = 44;
 const LOSS_BASELINE_MIN = 8;
 const SESSION_BASELINE_MIN = 30;
 const EXTREME_INACTIVITY_DAYS = 10;
@@ -141,11 +141,11 @@ function refreshRiskMeta(player, riskMeta) {
 }
 
 function lossSpikeThreshold(riskMeta) {
-  return Math.max(45, riskMeta.baselineLossPct + 18, riskMeta.rollingLossPct + 14);
+  return Math.max(38, riskMeta.baselineLossPct + 12, riskMeta.rollingLossPct + 9);
 }
 
 function longSessionThreshold(riskMeta) {
-  return Math.max(120, riskMeta.baselineSessionMinutes * 1.6, riskMeta.rollingSessionMinutes * 1.45);
+  return Math.max(105, riskMeta.baselineSessionMinutes * 1.35, riskMeta.rollingSessionMinutes * 1.25);
 }
 
 function deriveSevereSignals(player) {
@@ -158,11 +158,14 @@ function deriveSevereSignals(player) {
 
 export function deriveTriggers(player, riskMeta = null) {
   const activeRiskMeta = riskMeta ?? normalizeRiskMeta(player);
+  const severeSignals = deriveSevereSignals(player);
 
   return {
     inactivity7d: player.daysSinceLastBet >= 7,
-    lossSpike24h: player.lossChange24hPercent >= lossSpikeThreshold(activeRiskMeta),
-    longSessions: player.avgSessionMinutes >= longSessionThreshold(activeRiskMeta)
+    lossSpike24h:
+      player.lossChange24hPercent >= lossSpikeThreshold(activeRiskMeta) || severeSignals.severeLossSpike,
+    longSessions:
+      player.avgSessionMinutes >= longSessionThreshold(activeRiskMeta) || severeSignals.severeLongSessions
   };
 }
 
@@ -183,21 +186,31 @@ export function riskScoreFromTriggers(player, triggers, riskMeta = null) {
     100
   );
 
-  let score = 8 + inactivityScore * 0.35 + lossScore * 0.35 + sessionScore * 0.22 + volatilityScore * 0.08;
+  let score = 9 + inactivityScore * 0.34 + lossScore * 0.37 + sessionScore * 0.23 + volatilityScore * 0.06;
 
   if (triggers.inactivity7d) {
-    score += 8;
+    score += 11;
   }
   if (triggers.lossSpike24h) {
-    score += 8;
+    score += 11;
   }
   if (triggers.longSessions) {
-    score += 7;
+    score += 9;
   }
 
   const severe = deriveSevereSignals(player);
   if (severe.severeInactivity || severe.severeLossSpike || severe.severeLongSessions) {
     score += 10;
+  }
+
+  if (severe.severeInactivity) {
+    score = Math.max(score, 74);
+  }
+  if (severe.severeLossSpike) {
+    score = Math.max(score, 78);
+  }
+  if (severe.severeLongSessions) {
+    score = Math.max(score, 70);
   }
 
   return Math.round(clamp(score, 0, 100));
