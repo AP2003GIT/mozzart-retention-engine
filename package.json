@@ -6,9 +6,10 @@
   "scripts": {
     "dev": "node scripts/dev-all.mjs",
     "dev:frontend": "vite",
-    "dev:backend": "node server/index.js",
+    "dev:backend": "node scripts/run-java-backend.mjs",
+    "build:backend": "node scripts/run-java-backend.mjs --compile-only",
     "build": "vite build",
-    "start": "node server/index.js",
+    "start": "node scripts/run-java-backend.mjs",
     "preview": "vite preview",
     "test": "vitest run",
     "test:watch": "vitest"

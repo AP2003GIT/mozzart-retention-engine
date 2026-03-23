@@ -25,15 +25,16 @@ Retention + Responsible Gaming MVP for Mozzart Bet.
 - Vue 3
 - Pinia
 - Vite
-- Node.js backend (`http` + SSE)
-- PostgreSQL persistence via `pg` (Neon-ready)
+- Java 21 backend (`HttpServer` + SSE)
+- Local file persistence by default
 - Vitest + Vue Test Utils
 
 ## Architecture
 
 - `src/engine/retentionModel.js`: shared retention rules and KPI logic.
-- `server/index.js`: backend API and stream.
-- `server/playerStore.js`: persistence adapter (Postgres or memory fallback).
+- `java-backend/src/com/mozzart/retention/RetentionApplication.java`: Java API, SSE stream, static hosting, and persistence wiring.
+- `java-backend/src/com/mozzart/retention/RetentionDomain.java`: Java port of the retention model, KPI logic, interventions, and simulation.
+- `scripts/run-java-backend.mjs`: cross-platform compile + run bridge used by npm scripts.
 - `src/stores/retentionEngine.js`: frontend state layer consuming backend stream first, then fallback mock stream.
 
 ## API Endpoints
@@ -49,30 +50,33 @@ Retention + Responsible Gaming MVP for Mozzart Bet.
 ## Local Run (Windows + macOS + Linux)
 
 1. Install Node.js 20+.
-2. Install dependencies (`pg` included):
+2. Install Java/JDK 21+ (`java` and `javac` must be available).
+3. Install frontend dependencies:
 ```bash
 npm install
 ```
 
-3. Optional: add `.env` in project root for PostgreSQL persistence:
+4. Optional: add `.env` in project root:
 
 ```env
-DATABASE_URL="postgresql://...your-neon-connection-string..."
+RETENTION_PERSISTENCE=file
+RETENTION_DATA_FILE=.retention-java-backend.json
 ```
 
-4. Start frontend + backend together:
+5. Start frontend + backend together:
 
 ```bash
 npm run dev
 ```
 
-5. Open `http://localhost:5174`.
+6. Open `http://localhost:5174`.
 
 Useful scripts:
 - `npm run dev:frontend` starts only Vite.
-- `npm run dev:backend` starts only backend on `http://localhost:8787`.
+- `npm run dev:backend` compiles and starts the Java backend on `http://localhost:8787`.
+- `npm run build:backend` compiles the Java backend only.
 - To expose backend on LAN (for device testing), set `RETENTION_API_HOST=0.0.0.0`.
-- If `DATABASE_URL` is missing, backend falls back to memory mode.
+- Set `RETENTION_PERSISTENCE=memory` to force in-memory mode.
 
 ### Dev Troubleshooting
 
@@ -80,20 +84,16 @@ Useful scripts:
   - Bash: `RETENTION_API_PORT=8788 npm run dev`
   - PowerShell: `$env:RETENTION_API_PORT=8788; npm run dev`
   - CMD: `set RETENTION_API_PORT=8788 && npm run dev`
-- Neon DNS/network lookup error (`EAI_AGAIN`):
-  - Start in memory mode for now:
-    - Bash: `DATABASE_URL= npm run dev`
-    - PowerShell: `$env:DATABASE_URL=''; npm run dev`
-    - CMD: `set DATABASE_URL= && npm run dev`
+- If the Java backend cannot find `java` or `javac`, install JDK 21 and reopen the terminal.
 
-## Postgres Persistence
+## Persistence
 
-- Startup auto-creates `players` table if it does not exist.
-- Startup auto-creates `player_activity_events` table for update history.
-- First run seeds table from `src/data/seedPlayers.js` only when table is empty.
-- Every activity update is persisted to DB, so data survives restart.
+- The Java backend persists players and activity history to a local JSON file by default.
+- First run seeds data from the Java copy of the current seed players.
+- Every activity update is written back to the file, so state survives restart.
 - Activity history can be read via `GET /api/activity`.
-- Check current mode via `GET /api/health` (`persistenceMode` is `postgres` or `memory`).
+- Check current mode via `GET /api/health` (`persistenceMode` is `file` or `memory`).
+- If `DATABASE_URL` is set, the Java backend currently ignores it and logs a fallback message because no PostgreSQL JDBC driver is bundled yet.
 
 ## Risk Model Notes
 
@@ -106,16 +106,8 @@ Quick verify:
 
 ```bash
 curl -s http://127.0.0.1:8787/api/health
+curl -s http://127.0.0.1:8787/api/state
 curl -s "http://127.0.0.1:8787/api/activity?limit=10"
-```
-
-Neon SQL check:
-
-```sql
-SELECT id, player_id, source, update_payload, created_at
-FROM player_activity_events
-ORDER BY id DESC
-LIMIT 10;
 ```
 
 ## Production Run
@@ -132,7 +124,7 @@ Start unified backend + static host:
 npm run start
 ```
 
-Open `http://localhost:8787`.
+Open `http://localhost:8787`. The Java backend serves both the API and built frontend assets.
 
 ## Android Launch (PWA)
 
