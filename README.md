@@ -28,6 +28,7 @@ Retention + Responsible Gaming MVP for Mozzart Bet.
 - Spring Boot backend module with REST + SSE in `backend/`
 - Legacy Java 21 backend (`HttpServer` + SSE) kept as fallback
 - Local file persistence by default
+- Docker deployment option for a single public website URL
 - Vitest + Vue Test Utils
 
 ## Architecture
@@ -79,7 +80,7 @@ Useful scripts:
 - `npm run restart:dev` stops anything already using the dev ports and starts the full Spring + Vite flow again.
 - `npm run dev:backend` starts the Spring Boot backend module on `http://localhost:8787`.
 - `npm run dev:backend:legacy` starts the older Java backend if you need the previous runtime.
-- `npm run build:backend` runs Maven package for the Spring Boot backend.
+- `npm run build:backend` builds the Vue frontend and packages it into the Spring Boot jar.
 - `npm run build:backend:legacy` compiles the legacy Java backend only.
 - `npm run build:backend:spring` runs Maven tests/package for the Spring Boot backend.
 - To expose backend on LAN (for device testing), set `RETENTION_API_HOST=0.0.0.0`.
@@ -91,6 +92,7 @@ Useful scripts:
 - It exposes the same core API contract: `/api/health`, `/api/state`, `/api/players`, `/api/interventions`, `/api/activity`, `POST /api/players/{id}/activity`, and `/api/stream`.
 - It currently reuses the Java retention engine logic by copying `RetentionDomain.java` into the Maven module.
 - Persistence is still file-or-memory based for now; PostgreSQL can be added next through Spring Data.
+- Production packaging now copies the built Vue app from `dist/` into Spring static resources so one Spring server can host both the UI and API.
 - If `mvn` is not found in your shell, fix your Maven `PATH` first before using the Spring scripts.
 
 ### Dev Troubleshooting
@@ -101,6 +103,7 @@ Useful scripts:
   - CMD: `set RETENTION_API_PORT=8788 && npm run dev`
 - If the Spring backend cannot find `mvn`, install Maven or set `MAVEN_HOME`, then reopen the terminal.
 - If the legacy Java backend cannot find `java` or `javac`, install JDK 21 and reopen the terminal.
+- If you want a production-style local run on a different port, use `PORT=8788 npm run start`.
 
 ## Persistence
 
@@ -134,13 +137,45 @@ Build frontend:
 npm run build
 ```
 
-Start unified backend + static host:
+Start the packaged Spring website + API:
 
 ```bash
 npm run start
 ```
 
-Open `http://localhost:8787`. The Java backend serves both the API and built frontend assets.
+Open `http://localhost:8787`.
+
+- `npm run start` now builds the frontend, packages the Spring Boot jar, and runs the packaged website.
+- `npm run start:legacy` keeps the old Java production server available as a fallback.
+
+## Deploy
+
+The app is now ready to be deployed as a single public website backed by Spring Boot.
+
+Environment variables:
+- `PORT` lets cloud hosts choose the HTTP port automatically.
+- `RETENTION_PERSISTENCE=file|memory`
+- `RETENTION_DATA_FILE=../.retention-spring-backend.json`
+- `RETENTION_STREAM_MS=2200`
+
+Docker build:
+
+```bash
+docker build -t mozzart-retention-engine .
+```
+
+Docker run:
+
+```bash
+docker run --rm -p 8787:8787 -e PORT=8787 mozzart-retention-engine
+```
+
+Then open `http://localhost:8787`.
+
+To make it a real public website:
+1. Deploy the Docker image or Spring jar to a host like Railway, Render, Fly.io, or a VPS.
+2. Point your domain or subdomain to that host.
+3. Turn on HTTPS in the host or reverse proxy.
 
 ## Android Launch (PWA)
 

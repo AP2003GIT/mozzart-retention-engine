@@ -1,0 +1,12 @@
+.git
+.gitignore
+.codex
+.idea
+.m2
+node_modules
+dist
+backend/target
+java-backend/build
+*.iml
+.retention-java-backend.json
+.retention-spring-backend.json

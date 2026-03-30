@@ -90,10 +90,13 @@ async function main() {
 
   await mkdir(localMavenRepo, { recursive: true });
 
+  const backendEnv = { ...process.env };
+  delete backendEnv.DEBUG;
+
   const child = spawn(mvnPath, [`-Dmaven.repo.local=${localMavenRepo}`, ...args], {
     cwd: backendRoot,
     stdio: 'inherit',
-    env: process.env
+    env: backendEnv
   });
 
   child.on('exit', (code, signal) => {

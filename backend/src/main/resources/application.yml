@@ -3,7 +3,7 @@ spring:
     name: mozzart-retention-engine-backend
 
 server:
-  port: 8787
+  port: ${PORT:${RETENTION_API_PORT:8787}}
 
 management:
   endpoints:
@@ -12,6 +12,6 @@ management:
         include: health,info
 
 retention:
-  persistence: file
-  data-file: ../.retention-spring-backend.json
-  stream-interval-ms: 2200
+  persistence: ${RETENTION_PERSISTENCE:file}
+  data-file: ${RETENTION_DATA_FILE:../.retention-spring-backend.json}
+  stream-interval-ms: ${RETENTION_STREAM_MS:2200}
