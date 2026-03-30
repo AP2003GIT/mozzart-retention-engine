@@ -5,7 +5,7 @@ const backendHost = process.env.RETENTION_API_HOST ?? '127.0.0.1';
 const backendPort = Number(process.env.RETENTION_API_PORT ?? 8787);
 const backendHealthUrl = `http://${backendHost}:${backendPort}/api/health`;
 
-const backend = spawn(process.execPath, ['scripts/run-java-backend.mjs'], {
+const backend = spawn(npmBin, ['run', 'dev:backend'], {
   stdio: 'inherit',
   env: process.env
 });

@@ -1,5 +1,11 @@
 node_modules/
 dist/
 .env
+.codex
+.idea/
+.m2/
+*.iml
+backend/target/
 java-backend/build/
 .retention-java-backend.json
+.retention-spring-backend.json
