@@ -25,7 +25,8 @@ Retention + Responsible Gaming MVP for Mozzart Bet.
 - Vue 3
 - Pinia
 - Vite
-- Spring Boot backend module with REST + SSE in `backend/`
+- Spring Boot players API in `backend/` (monolith or microservices gateway)
+- Spring Boot risk and CRM services in `services/`
 - Legacy Java 21 backend (`HttpServer` + SSE) kept as fallback
 - Local file persistence by default
 - Docker deployment option for a single public website URL
@@ -35,6 +36,8 @@ Retention + Responsible Gaming MVP for Mozzart Bet.
 
 - `src/engine/retentionModel.js`: shared retention rules and KPI logic.
 - `backend/`: Spring Boot Maven module that mirrors the current `/api/...` contract with REST controllers and SSE.
+- `services/risk-service/`: risk scoring microservice (`/api/risk/...`).
+- `services/crm-service/`: CRM intervention microservice (`/api/crm/...`).
 - `java-backend/src/com/mozzart/retention/RetentionApplication.java`: legacy Java API, SSE stream, static hosting, and persistence wiring.
 - `java-backend/src/com/mozzart/retention/RetentionDomain.java`: Java port of the retention model, KPI logic, interventions, and simulation.
 - `scripts/run-java-backend.mjs`: cross-platform compile + run bridge used by npm scripts.
@@ -77,8 +80,11 @@ npm run dev
 Useful scripts:
 - `npm run dev:frontend` starts only Vite.
 - `npm run dev` now starts the Spring Boot backend by default and waits for `/api/health` before launching Vite.
+- `npm run dev:microservices` starts the risk + CRM services first, then runs the players API with microservices enabled.
 - `npm run restart:dev` stops anything already using the dev ports and starts the full Spring + Vite flow again.
 - `npm run dev:backend` starts the Spring Boot backend module on `http://localhost:8787`.
+- `npm run dev:risk` starts the risk microservice on `http://localhost:8792`.
+- `npm run dev:crm` starts the CRM microservice on `http://localhost:8793`.
 - `npm run dev:backend:legacy` starts the older Java backend if you need the previous runtime.
 - `npm run build:backend` builds the Vue frontend and packages it into the Spring Boot jar.
 - `npm run build:backend:legacy` compiles the legacy Java backend only.
@@ -94,6 +100,24 @@ Useful scripts:
 - Persistence is still file-or-memory based for now; PostgreSQL can be added next through Spring Data.
 - Production packaging now copies the built Vue app from `dist/` into Spring static resources so one Spring server can host both the UI and API.
 - If `mvn` is not found in your shell, fix your Maven `PATH` first before using the Spring scripts.
+
+## Microservices Mode
+
+This repo now includes a simple microservices split:
+- Players API (gateway) in `backend/`
+- Risk service in `services/risk-service/`
+- CRM service in `services/crm-service/`
+
+Start all three services plus the frontend:
+
+```bash
+npm run dev:microservices
+```
+
+Environment variables (optional):
+- `RETENTION_MICROSERVICES=true`
+- `RETENTION_RISK_URL=http://127.0.0.1:8792`
+- `RETENTION_CRM_URL=http://127.0.0.1:8793`
 
 ### Dev Troubleshooting
 

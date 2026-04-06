@@ -1,0 +1,12 @@
+spring:
+  application:
+    name: mozzart-risk-service
+
+server:
+  port: ${RISK_SERVICE_PORT:8792}
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info

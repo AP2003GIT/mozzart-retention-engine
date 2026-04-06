@@ -6,6 +6,7 @@
 node_modules
 dist
 backend/target
+services/*/target
 java-backend/build
 *.iml
 .retention-java-backend.json

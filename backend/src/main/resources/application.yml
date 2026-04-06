@@ -15,3 +15,7 @@ retention:
   persistence: ${RETENTION_PERSISTENCE:file}
   data-file: ${RETENTION_DATA_FILE:../.retention-spring-backend.json}
   stream-interval-ms: ${RETENTION_STREAM_MS:2200}
+  microservices:
+    enabled: ${RETENTION_MICROSERVICES:false}
+    risk-url: ${RETENTION_RISK_URL:http://127.0.0.1:8792}
+    crm-url: ${RETENTION_CRM_URL:http://127.0.0.1:8793}

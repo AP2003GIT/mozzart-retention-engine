@@ -5,9 +5,12 @@
   "type": "module",
   "scripts": {
     "dev": "node scripts/dev-all.mjs",
+    "dev:microservices": "node scripts/dev-microservices.mjs",
     "restart:dev": "node scripts/restart-dev.mjs",
     "dev:frontend": "vite",
     "dev:backend": "node scripts/run-spring-backend.mjs spring-boot:run",
+    "dev:risk": "node scripts/run-spring-service.mjs services/risk-service spring-boot:run",
+    "dev:crm": "node scripts/run-spring-service.mjs services/crm-service spring-boot:run",
     "dev:backend:legacy": "node scripts/run-java-backend.mjs",
     "dev:backend:spring": "node scripts/run-spring-backend.mjs spring-boot:run",
     "build:backend": "npm run build && node scripts/run-spring-backend.mjs test package",

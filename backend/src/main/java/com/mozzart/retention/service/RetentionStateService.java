@@ -11,6 +11,10 @@ import com.mozzart.retention.RetentionDomain.Player;
 import com.mozzart.retention.RetentionDomain.UpdatePatch;
 import jakarta.annotation.PostConstruct;
 import java.io.IOException;
+import java.net.URI;
+import java.net.http.HttpClient;
+import java.net.http.HttpRequest;
+import java.net.http.HttpResponse;
 import java.nio.file.AtomicMoveNotSupportedException;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -35,6 +39,10 @@ public class RetentionStateService {
   private final ObjectMapper objectMapper;
   private final String configuredPersistenceMode;
   private final Path dataFile;
+  private final boolean microservicesEnabled;
+  private final String riskServiceUrl;
+  private final String crmServiceUrl;
+  private final HttpClient httpClient = HttpClient.newHttpClient();
   private final Random random = new Random();
   private final Object stateLock = new Object();
   private final CopyOnWriteArrayList<SseEmitter> emitters = new CopyOnWriteArrayList<>();
@@ -48,10 +56,16 @@ public class RetentionStateService {
   public RetentionStateService(
       ObjectMapper objectMapper,
       @Value("${retention.persistence:file}") String configuredPersistenceMode,
-      @Value("${retention.data-file:../.retention-spring-backend.json}") String dataFilePath) {
+      @Value("${retention.data-file:../.retention-spring-backend.json}") String dataFilePath,
+      @Value("${retention.microservices.enabled:false}") boolean microservicesEnabled,
+      @Value("${retention.microservices.risk-url:http://127.0.0.1:8792}") String riskServiceUrl,
+      @Value("${retention.microservices.crm-url:http://127.0.0.1:8793}") String crmServiceUrl) {
     this.objectMapper = objectMapper;
     this.configuredPersistenceMode = configuredPersistenceMode == null ? "file" : configuredPersistenceMode;
     this.dataFile = Path.of(dataFilePath).normalize().toAbsolutePath();
+    this.microservicesEnabled = microservicesEnabled;
+    this.riskServiceUrl = riskServiceUrl == null ? "http://127.0.0.1:8792" : riskServiceUrl;
+    this.crmServiceUrl = crmServiceUrl == null ? "http://127.0.0.1:8793" : crmServiceUrl;
   }
 
   @PostConstruct
@@ -80,6 +94,9 @@ public class RetentionStateService {
       payload.put("service", "mozzart-retention-engine-backend");
       payload.put("runtime", "spring-boot");
       payload.put("persistenceMode", persistenceMode);
+      payload.put("microservicesEnabled", microservicesEnabled);
+      payload.put("riskServiceUrl", riskServiceUrl);
+      payload.put("crmServiceUrl", crmServiceUrl);
       payload.put("players", players.size());
       payload.put("now", Instant.now().toString());
       return payload;
@@ -105,7 +122,7 @@ public class RetentionStateService {
   public Map<String, Object> interventionsPayload() {
     synchronized (stateLock) {
       Map<String, Object> payload = new LinkedHashMap<>();
-      payload.put("interventions", interventionMaps(topInterventions(players, 10)));
+      payload.put("interventions", resolveInterventionMaps(players, 10));
       payload.put("lastUpdatedAt", lastUpdatedAt);
       payload.put("persistenceMode", persistenceMode);
       return payload;
@@ -180,7 +197,7 @@ public class RetentionStateService {
       return null;
     }
 
-    Player updatedPlayer = RetentionDomain.applyActivityUpdate(players.get(playerIndex), patch);
+    Player updatedPlayer = applyUpdateViaRiskService(players.get(playerIndex), patch);
     List<Player> nextPlayers = new ArrayList<>(players);
     nextPlayers.set(playerIndex, updatedPlayer);
     players = nextPlayers;
@@ -226,7 +243,7 @@ public class RetentionStateService {
   private Map<String, Object> snapshotPayload() {
     Map<String, Object> payload = new LinkedHashMap<>();
     payload.put("players", playerMaps(players));
-    payload.put("interventions", interventionMaps(topInterventions(players, 10)));
+    payload.put("interventions", resolveInterventionMaps(players, 10));
     Kpis kpis = RetentionDomain.buildKpis(players);
     payload.put("kpis", kpis.toMap());
     payload.put("experimentSummary", experimentSummaryMaps(RetentionDomain.buildExperimentSummary(players)));
@@ -282,7 +299,7 @@ public class RetentionStateService {
   }
 
   private void seedFreshState() {
-    players = RetentionDomain.enrichPlayers(RetentionDomain.seedPlayers());
+    players = enrichPlayersViaRiskService(RetentionDomain.seedPlayers());
     activityEvents = new ArrayList<>();
     nextEventId = 1;
     lastUpdatedAt = null;
@@ -341,7 +358,10 @@ public class RetentionStateService {
       }
     }
 
-    players = loadedPlayers.isEmpty() ? RetentionDomain.enrichPlayers(RetentionDomain.seedPlayers()) : loadedPlayers;
+    players =
+        loadedPlayers.isEmpty()
+            ? enrichPlayersViaRiskService(RetentionDomain.seedPlayers())
+            : enrichPlayersViaRiskService(loadedPlayers);
 
     List<ActivityEvent> loadedEvents = new ArrayList<>();
     Object savedEvents = root.get("activityEvents");
@@ -359,5 +379,113 @@ public class RetentionStateService {
         nextEventIdValue instanceof Number number ? number.longValue() : Math.max(1, activityEvents.size() + 1L);
     Object lastUpdatedAtValue = root.get("lastUpdatedAt");
     lastUpdatedAt = lastUpdatedAtValue == null ? null : String.valueOf(lastUpdatedAtValue);
+  }
+
+  private List<Player> enrichPlayersViaRiskService(List<Player> source) {
+    if (!microservicesEnabled) {
+      return RetentionDomain.enrichPlayers(source);
+    }
+
+    try {
+      Map<String, Object> payload = new LinkedHashMap<>();
+      payload.put("players", playerMaps(source));
+      Map<String, Object> response = postJson(riskServiceUrl + "/api/risk/enrich", payload);
+      List<Map<String, Object>> enrichedMaps = listOfMaps(response, "players");
+      if (enrichedMaps.isEmpty()) {
+        return RetentionDomain.enrichPlayers(source);
+      }
+      List<Player> enriched = new ArrayList<>();
+      for (Map<String, Object> map : enrichedMaps) {
+        enriched.add(Player.fromMap(map));
+      }
+      return enriched;
+    } catch (Exception error) {
+      return RetentionDomain.enrichPlayers(source);
+    }
+  }
+
+  private Player applyUpdateViaRiskService(Player current, UpdatePatch patch) {
+    if (!microservicesEnabled) {
+      return RetentionDomain.applyActivityUpdate(current, patch);
+    }
+
+    try {
+      Map<String, Object> payload = new LinkedHashMap<>();
+      payload.put("player", current == null ? Map.of() : current.toMap());
+      payload.put("update", patch == null ? Map.of() : patch.toMap());
+      Map<String, Object> response = postJson(riskServiceUrl + "/api/risk/apply-update", payload);
+      Map<String, Object> playerMap = mapValue(response, "player");
+      if (playerMap.isEmpty()) {
+        return RetentionDomain.applyActivityUpdate(current, patch);
+      }
+      return Player.fromMap(playerMap);
+    } catch (Exception error) {
+      return RetentionDomain.applyActivityUpdate(current, patch);
+    }
+  }
+
+  private List<Map<String, Object>> resolveInterventionMaps(List<Player> sourcePlayers, int limit) {
+    if (!microservicesEnabled) {
+      return interventionMaps(topInterventions(sourcePlayers, limit));
+    }
+
+    try {
+      Map<String, Object> payload = new LinkedHashMap<>();
+      payload.put("players", playerMaps(sourcePlayers));
+      payload.put("limit", limit);
+      Map<String, Object> response = postJson(crmServiceUrl + "/api/crm/interventions", payload);
+      List<Map<String, Object>> interventions = listOfMaps(response, "interventions");
+      if (!interventions.isEmpty()) {
+        return interventions;
+      }
+      return interventionMaps(topInterventions(sourcePlayers, limit));
+    } catch (Exception error) {
+      return interventionMaps(topInterventions(sourcePlayers, limit));
+    }
+  }
+
+  private Map<String, Object> postJson(String url, Map<String, Object> payload) throws IOException, InterruptedException {
+    String body = objectMapper.writeValueAsString(payload == null ? Map.of() : payload);
+    HttpRequest request =
+        HttpRequest.newBuilder()
+            .uri(URI.create(url))
+            .header("Content-Type", "application/json")
+            .POST(HttpRequest.BodyPublishers.ofString(body))
+            .build();
+    HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
+    if (response.statusCode() < 200 || response.statusCode() >= 300) {
+      throw new IOException("Service request failed with status " + response.statusCode());
+    }
+    return objectMapper.readValue(response.body(), new TypeReference<Map<String, Object>>() {});
+  }
+
+  @SuppressWarnings("unchecked")
+  private List<Map<String, Object>> listOfMaps(Map<String, Object> payload, String key) {
+    if (payload == null) {
+      return List.of();
+    }
+    Object value = payload.get(key);
+    if (value instanceof List<?> listValue) {
+      List<Map<String, Object>> result = new ArrayList<>();
+      for (Object item : listValue) {
+        if (item instanceof Map<?, ?> mapItem) {
+          result.add(new LinkedHashMap<>((Map<String, Object>) mapItem));
+        }
+      }
+      return result;
+    }
+    return List.of();
+  }
+
+  @SuppressWarnings("unchecked")
+  private Map<String, Object> mapValue(Map<String, Object> payload, String key) {
+    if (payload == null) {
+      return Map.of();
+    }
+    Object value = payload.get(key);
+    if (value instanceof Map<?, ?> mapValue) {
+      return new LinkedHashMap<>((Map<String, Object>) mapValue);
+    }
+    return Map.of();
   }
 }
